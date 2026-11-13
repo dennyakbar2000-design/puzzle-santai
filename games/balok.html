@@ -1,0 +1,274 @@
+<!doctype html><html lang="id"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Susun Balok · Puzzle Santai</title>
+<meta name="theme-color" content="#e2572b">
+<link rel="manifest" href="../manifest.webmanifest"><link rel="icon" href="../icon.svg">
+<link rel="stylesheet" href="../style.css">
+<style>
+  :root {
+    --b1: #e2572b; --b2: #f2a516; --b3: #3fa66b; --b4: #2f8fd1; --b5: #8a5cd6; --b6: #d94f8c;
+    --cell-gap: 3px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --b1: #ff7a4d; --b2: #ffc145; --b3: #5cc98a; --b4: #5aaef0; --b5: #a985ef; --b6: #f074aa; }
+  }
+  .board {
+    width: min(100%, 420px);
+    aspect-ratio: 1;
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    grid-template-rows: repeat(8, 1fr);
+    gap: var(--cell-gap);
+    padding: 6px;
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    touch-action: none;
+  }
+  .cell { border-radius: 5px; background: var(--surface-2); }
+  .blk { border-radius: 5px; box-shadow: inset 0 -3px 0 rgba(0, 0, 0, .18); }
+  [data-c="1"] { background: var(--b1); } [data-c="2"] { background: var(--b2); }
+  [data-c="3"] { background: var(--b3); } [data-c="4"] { background: var(--b4); }
+  [data-c="5"] { background: var(--b5); } [data-c="6"] { background: var(--b6); }
+  .cell.ghost { background: color-mix(in srgb, #3fa66b 45%, var(--surface-2)); }
+  .cell.hint { filter: brightness(1.25); outline: 2px solid #3fa66b; outline-offset: -2px; }
+  .cell.pop { animation: pop .22s ease-out; }
+  @keyframes pop {
+    0% { background: var(--accent); transform: scale(1); }
+    100% { background: var(--surface-2); transform: scale(.4); }
+  }
+  .tray {
+    width: min(100%, 420px);
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    touch-action: none;
+  }
+  .slot {
+    height: 112px;
+    display: grid;
+    place-items: center;
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    cursor: grab;
+    touch-action: none;
+  }
+  .slot.dim .piece { opacity: .3; }
+  .slot.lifted .piece { visibility: hidden; }
+  .piece { display: grid; }
+  .float {
+    position: fixed;
+    z-index: 10;
+    pointer-events: none;
+    filter: drop-shadow(0 8px 12px rgba(0, 0, 0, .3));
+  }
+  .float.back { transition: left .18s ease-in, top .18s ease-in, opacity .18s; opacity: .6; }
+</style></head>
+<body class="game">
+<header class="topbar"><a class="back" href="../index.html" aria-label="Kembali ke daftar game">‹</a><h1>Susun Balok</h1>
+<div class="stats"><span>Skor <b id="score">0</b></span><span>Terbaik <b id="best">0</b></span></div></header>
+<main class="stage">
+  <div class="board" id="board" aria-label="Papan 8 kali 8"></div>
+  <div class="tray" id="tray" aria-label="Balok yang bisa dipakai"></div>
+</main>
+<div class="toolbar"><button class="btn" id="restart">Main lagi</button></div>
+<dialog class="overlay" id="over"><h2>Tidak ada tempat lagi</h2><p id="final">Skor kamu 0</p><button class="btn primary" id="again">Main lagi</button></dialog>
+<script type="module">
+import { SIZE, emptyBoard, canPlace, place, randomPieces, anyFits, fitsAnywhere, previewClears } from '../logic/balok.js';
+import { getBest, saveBest, registerSW } from '../app.js';
+registerSW();
+
+const KEY = 'balok';
+const TOUCH_LIFT = 70; // px the dragged piece floats above the finger
+const TRAY_CELL = 18;
+const TRAY_GAP = 2;
+const POP_MS = 230;
+const BACK_MS = 200;
+
+const $ = (id) => document.getElementById(id);
+const boardEl = $('board');
+const trayEl = $('tray');
+const scoreEl = $('score');
+const bestEl = $('best');
+const overDlg = $('over');
+
+const cells = [];
+for (let r = 0; r < SIZE; r++) {
+  for (let c = 0; c < SIZE; c++) {
+    const el = document.createElement('div');
+    el.className = 'cell';
+    boardEl.append(el);
+    cells.push(el);
+  }
+}
+const cellAt = (r, c) => cells[r * SIZE + c];
+
+const slots = [0, 1, 2].map((i) => {
+  const el = document.createElement('div');
+  el.className = 'slot';
+  el.dataset.i = i;
+  trayEl.append(el);
+  return el;
+});
+
+let state;
+let drag = null;
+
+function newGame() {
+  if (drag) { drag.el.remove(); drag = null; clearPreview(); }
+  state = { board: emptyBoard(), tray: randomPieces(), score: 0, over: false };
+  bestEl.textContent = getBest(KEY);
+  render();
+}
+
+function pieceEl(shape, color, size, gap) {
+  const rows = Math.max(...shape.map(([r]) => r)) + 1;
+  const cols = Math.max(...shape.map(([, c]) => c)) + 1;
+  const el = document.createElement('div');
+  el.className = 'piece';
+  el.style.gridTemplateRows = `repeat(${rows}, ${size}px)`;
+  el.style.gridTemplateColumns = `repeat(${cols}, ${size}px)`;
+  el.style.gap = `${gap}px`;
+  for (const [r, c] of shape) {
+    const b = document.createElement('div');
+    b.className = 'blk';
+    b.dataset.c = color;
+    b.style.gridRow = r + 1;
+    b.style.gridColumn = c + 1;
+    el.append(b);
+  }
+  return el;
+}
+
+function render() {
+  state.board.forEach((line, r) => line.forEach((v, c) => {
+    const el = cellAt(r, c);
+    if (v) el.dataset.c = v; else delete el.dataset.c;
+  }));
+  slots.forEach((slot, i) => {
+    const p = state.tray[i];
+    slot.replaceChildren();
+    slot.classList.remove('lifted', 'dim');
+    if (!p) return;
+    slot.append(pieceEl(p.shape, p.color, TRAY_CELL, TRAY_GAP));
+    slot.classList.toggle('dim', !fitsAnywhere(state.board, p.shape));
+  });
+  scoreEl.textContent = state.score;
+}
+
+// Board geometry measured from real cells, so CSS padding/gap never drift out of sync.
+function grid() {
+  const a = cells[0].getBoundingClientRect();
+  const b = cells[1].getBoundingClientRect();
+  return { x: a.left, y: a.top, size: a.width, pitch: b.left - a.left };
+}
+
+function clearPreview() {
+  for (const el of cells) el.classList.remove('ghost', 'hint');
+}
+
+function showPreview(shape, r, c) {
+  clearPreview();
+  if (!canPlace(state.board, shape, r, c)) return false;
+  for (const [dr, dc] of shape) cellAt(r + dr, c + dc).classList.add('ghost');
+  markLines(previewClears(state.board, shape, r, c), 'hint');
+  return true;
+}
+
+function markLines({ rows, cols }, cls) {
+  for (const r of rows) for (let c = 0; c < SIZE; c++) cellAt(r, c).classList.add(cls);
+  for (const c of cols) for (let r = 0; r < SIZE; r++) cellAt(r, c).classList.add(cls);
+}
+
+function onDown(e) {
+  const i = Number(e.currentTarget.dataset.i);
+  const piece = state.tray[i];
+  if (drag || state.over || !piece) return;
+  const g = grid();
+  const el = pieceEl(piece.shape, piece.color, g.size, g.pitch - g.size);
+  el.classList.add('float');
+  document.body.append(el);
+  const rect = el.getBoundingClientRect();
+  const lift = e.pointerType === 'mouse' ? -rect.height / 2 : TOUCH_LIFT;
+  drag = { i, piece, el, g, w: rect.width, h: rect.height, lift, r: -1, c: -1, ok: false, slot: e.currentTarget };
+  drag.slot.setPointerCapture(e.pointerId);
+  drag.slot.classList.add('lifted');
+  moveTo(e.clientX, e.clientY);
+}
+
+function moveTo(x, y) {
+  const left = x - drag.w / 2;
+  const top = y - drag.h - drag.lift;
+  drag.el.style.left = `${left}px`;
+  drag.el.style.top = `${top}px`;
+  drag.r = Math.round((top - drag.g.y) / drag.g.pitch);
+  drag.c = Math.round((left - drag.g.x) / drag.g.pitch);
+  drag.ok = showPreview(drag.piece.shape, drag.r, drag.c);
+}
+
+function onMove(e) {
+  if (drag) moveTo(e.clientX, e.clientY);
+}
+
+function onUp() {
+  if (!drag) return;
+  const d = drag;
+  drag = null;
+  clearPreview();
+  if (d.ok && state.tray[d.i] === d.piece) {
+    d.el.remove();
+    commit(d.i, d.r, d.c);
+  } else {
+    flyBack(d);
+  }
+}
+
+function flyBack(d) {
+  const target = d.slot.getBoundingClientRect();
+  d.el.classList.add('back');
+  d.el.style.left = `${target.left + (target.width - d.w) / 2}px`;
+  d.el.style.top = `${target.top + (target.height - d.h) / 2}px`;
+  setTimeout(() => {
+    d.el.remove();
+    d.slot.classList.remove('lifted');
+  }, BACK_MS);
+}
+
+function commit(i, r, c) {
+  const { shape, color } = state.tray[i];
+  const lines = previewClears(state.board, shape, r, c);
+  const res = place(state.board, shape, r, c, color);
+  const tray = state.tray.map((p, k) => (k === i ? null : p));
+  state = { ...state, board: res.board, tray: tray.some(Boolean) ? tray : randomPieces(), score: state.score + res.points };
+  bestEl.textContent = saveBest(KEY, state.score);
+  render();
+  if (res.cleared) popLines(lines);
+  checkOver();
+}
+
+function popLines(lines) {
+  markLines(lines, 'pop');
+  setTimeout(() => { for (const el of cells) el.classList.remove('pop'); }, POP_MS);
+}
+
+function checkOver() {
+  const left = state.tray.filter(Boolean).map((p) => p.shape);
+  if (anyFits(state.board, left)) return;
+  state = { ...state, over: true };
+  $('final').textContent = `Skor kamu ${state.score}. Coba lagi?`;
+  overDlg.showModal();
+}
+
+for (const slot of slots) {
+  slot.addEventListener('pointerdown', onDown);
+  slot.addEventListener('pointermove', onMove);
+  slot.addEventListener('pointerup', onUp);
+  slot.addEventListener('pointercancel', onUp);
+}
+$('restart').addEventListener('click', newGame);
+$('again').addEventListener('click', () => overDlg.close());
+overDlg.addEventListener('close', newGame);
+
+newGame();
+</script></body></html>

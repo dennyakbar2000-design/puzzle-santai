@@ -1,0 +1,148 @@
+<!doctype html><html lang="id"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>Kart Santai · Puzzle Santai</title>
+<meta name="theme-color" content="#e2572b">
+<link rel="manifest" href="../manifest.webmanifest"><link rel="icon" href="../icon.svg">
+<link rel="stylesheet" href="../style.css">
+<style>
+  body.kart {
+    position: fixed; inset: 0; max-width: none; margin: 0; padding: 0;
+    overflow: hidden; touch-action: none; overscroll-behavior: none;
+    background: #9fdcf5; -webkit-touch-callout: none;
+  }
+  #view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
+  .kbar {
+    position: fixed; z-index: 5; top: 0; left: 0; right: 0;
+    padding: calc(env(safe-area-inset-top) + 8px) calc(env(safe-area-inset-right) + 10px) 0 calc(env(safe-area-inset-left) + 10px);
+    pointer-events: none;
+  }
+  .kbar > * { pointer-events: auto; }
+  .kbar h1 { color: #17324a; text-shadow: 0 1px 0 rgba(255,255,255,.7); }
+  .kbar .stats span { min-width: 58px; }
+  .icon-btn { width: 40px; height: 40px; min-height: 40px; padding: 0; font-size: 1.15rem; }
+  body:not(.racing) .race-only, body.racing .menu-only { display: none; }
+
+  .outline { color: #fff; text-shadow: -2px -2px 0 #1b1b2b, 2px -2px 0 #1b1b2b, -2px 2px 0 #1b1b2b, 2px 2px 0 #1b1b2b, 0 3px 6px rgba(0,0,0,.4); font-weight: 900; }
+  #hud { position: fixed; inset: 0; z-index: 4; pointer-events: none; }
+  #pos { position: absolute; left: calc(env(safe-area-inset-left) + 14px); top: calc(env(safe-area-inset-top) + 58px); font-size: 2.6rem; line-height: 1; }
+  .itembox {
+    position: absolute; left: 50%; top: calc(env(safe-area-inset-top) + 58px); translate: -50% 0;
+    width: 56px; height: 56px; display: grid; place-items: center; font-size: 2rem;
+    border-radius: 14px; background: rgba(255,255,255,.35); border: 3px solid rgba(255,255,255,.85);
+  }
+  .speed { position: absolute; left: 50%; top: calc(env(safe-area-inset-top) + 120px); translate: -50% 0; width: 90px; height: 7px; border-radius: 4px; background: rgba(0,0,0,.3); overflow: hidden; }
+  #speedFill { display: block; height: 100%; background: linear-gradient(90deg, #ffd23f, #ff8a1f, #e8453c); transform-origin: left; transform: scaleX(0); }
+  .center-msg { position: absolute; left: 0; right: 0; text-align: center; }
+  #countdown { top: 32%; font-size: 5rem; }
+  #countdown.pop { animation: pop .5s ease-out; }
+  @keyframes pop { from { transform: scale(1.8); opacity: .3; } to { transform: none; opacity: 1; } }
+  #banner { top: 24%; font-size: 1.7rem; padding: 0 16px; }
+  #wrongWay { top: 42%; font-size: 1.6rem; color: #ffd0cc; }
+  .hint-portrait { position: absolute; left: 50%; translate: -50% 0; white-space: nowrap; top: calc(env(safe-area-inset-top) + 136px); font-size: .75rem; padding: 4px 8px; border-radius: 8px; background: rgba(0,0,0,.4); color: #fff; display: none; }
+  @media (orientation: portrait) { .hint-portrait { display: block; } }
+
+  #controls { display: none; position: absolute; inset: auto 0 0 0; height: 0; }
+  @media (pointer: coarse), (hover: none) { #controls { display: block; } }
+  .tbtn {
+    position: absolute; bottom: calc(env(safe-area-inset-bottom) + var(--b, 18px));
+    display: grid; place-items: center; width: var(--s, 76px); height: var(--s, 76px);
+    border: 3px solid rgba(255,255,255,.8); border-radius: 50%; background: rgba(20,24,40,.32);
+    color: #fff; font: 800 1.5rem/1 system-ui, sans-serif; pointer-events: auto;
+    touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  }
+  .tbtn small { font-size: .7rem; letter-spacing: .04em; }
+  .tbtn.on { background: rgba(255,255,255,.45); transform: scale(.94); }
+  .tbtn[data-ctl="left"] { left: calc(env(safe-area-inset-left) + 14px); }
+  .tbtn[data-ctl="right"] { left: calc(env(safe-area-inset-left) + 102px); }
+  .tbtn[data-ctl="drift"] { right: calc(env(safe-area-inset-right) + 14px); --s: 88px; background: rgba(226,87,43,.5); }
+  .tbtn[data-ctl="item"] { right: calc(env(safe-area-inset-right) + 112px); --s: 64px; --b: 70px; }
+  .tbtn[data-ctl="brake"] { right: calc(env(safe-area-inset-right) + 116px); --s: 52px; --b: 10px; }
+
+  #menu {
+    position: fixed; inset: 0; z-index: 3; overflow-y: auto; touch-action: pan-y;
+    display: flex; align-items: center; justify-content: center;
+    padding: calc(env(safe-area-inset-top) + 60px) 16px calc(env(safe-area-inset-bottom) + 16px);
+    background: linear-gradient(rgba(159,220,245,0) 0%, rgba(20,40,60,.35) 100%);
+  }
+  #menu[hidden] { display: none; }
+  .panel { width: min(640px, 100%); padding: 16px; border-radius: 20px; background: var(--surface); box-shadow: var(--shadow); text-align: center; }
+  .panel h2 { margin: 0; font-size: 1.4rem; }
+  .panel p { margin: 4px 0 12px; color: var(--muted); font-size: .9rem; }
+  .racers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
+  @media (max-width: 480px) { .racers { grid-template-columns: repeat(2, 1fr); } }
+  .racer {
+    appearance: none; font: inherit; color: inherit; cursor: pointer;
+    display: flex; flex-direction: column; align-items: stretch; gap: 3px; padding: 8px;
+    border-radius: 14px; border: 3px solid transparent; background: var(--surface-2); text-align: left;
+  }
+  .racer.sel { border-color: var(--kc); background: color-mix(in srgb, var(--kc) 18%, var(--surface)); }
+  .racer:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .racer .face { font-size: 1.8rem; text-align: center; line-height: 1.1; }
+  .racer b { font-size: .85rem; text-align: center; }
+  .stat small { display: block; font-size: .62rem; color: var(--muted); }
+  .stat i { display: block; height: 5px; border-radius: 3px; background: var(--line); position: relative; overflow: hidden; }
+  .stat i::after { content: ""; position: absolute; inset: 0; width: calc(var(--v) * 100%); background: var(--kc); }
+  .keys { font-size: .75rem !important; }
+
+  dialog.overlay table { width: 100%; border-collapse: collapse; margin: 0 0 14px; font-size: .9rem; text-align: left; }
+  dialog.overlay td { padding: 5px 4px; border-bottom: 1px solid var(--line); }
+  dialog.overlay td:first-child { width: 1.5em; font-weight: 800; }
+  dialog.overlay td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  dialog.overlay tr.me { color: var(--accent); font-weight: 700; }
+  .row-btns { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  #results { width: min(380px, calc(100vw - 32px)); max-height: calc(100dvh - 24px); overflow-y: auto; }
+</style></head>
+<body class="game kart">
+<canvas id="view"></canvas>
+
+<header class="topbar kbar">
+  <a class="back" href="../index.html" aria-label="Kembali ke daftar game">‹</a>
+  <h1 class="menu-only">Kart Santai</h1>
+  <div class="stats race-only" style="flex:1"><span>Putaran <b id="lap">1/3</b></span><span>Waktu <b id="time">0:00.00</b></span></div>
+  <button class="btn icon-btn" id="muteBtn" type="button" aria-label="Matikan suara">🔊</button>
+  <button class="btn icon-btn race-only" id="pauseBtn" type="button" aria-label="Jeda">⏸</button>
+</header>
+
+<div id="hud" hidden>
+  <div id="pos" class="outline">4/4</div>
+  <div class="itembox" aria-label="Item"><span id="item"></span></div>
+  <div class="speed" aria-hidden="true"><i id="speedFill"></i></div>
+  <div class="hint-portrait">Lebih enak dimainkan miring 📱↔️</div>
+  <div id="countdown" class="center-msg outline" hidden></div>
+  <div id="banner" class="center-msg outline" hidden></div>
+  <div id="wrongWay" class="center-msg outline" hidden>Arah salah! ↩️</div>
+  <div id="controls">
+    <button class="tbtn" data-ctl="left" type="button" aria-label="Belok kiri">◀</button>
+    <button class="tbtn" data-ctl="right" type="button" aria-label="Belok kanan">▶</button>
+    <button class="tbtn" data-ctl="drift" type="button"><small>DRIFT</small></button>
+    <button class="tbtn" data-ctl="item" type="button"><small>ITEM</small></button>
+    <button class="tbtn" data-ctl="brake" type="button"><small>REM</small></button>
+  </div>
+</div>
+
+<section id="menu">
+  <div class="panel">
+    <h2>🏝️ Pantai Kelapa</h2>
+    <p>Pilih pembalap, 3 putaran lawan 3 bot.</p>
+    <div class="racers" id="racers"></div>
+    <p id="menuBest"></p>
+    <button class="btn primary" id="startBtn" type="button">Mulai balapan!</button>
+    <p class="keys">Keyboard: ←→ belok · ↑ gas · ↓ rem · Spasi drift · E item.<br>HP: gas otomatis, tahan DRIFT sambil belok lalu lepas untuk turbo.</p>
+  </div>
+</section>
+
+<dialog class="overlay" id="results">
+  <h2 id="resTitle">Selesai!</h2>
+  <p id="resInfo"></p>
+  <table><tbody id="resTable"></tbody></table>
+  <div class="row-btns"><button class="btn primary" id="againBtn" type="button">Main lagi</button><button class="btn" id="changeBtn" type="button">Ganti pembalap</button></div>
+</dialog>
+
+<dialog class="overlay" id="pause">
+  <h2>Jeda</h2>
+  <p>Balapan dihentikan sebentar.</p>
+  <div class="row-btns"><button class="btn primary" id="resumeBtn" type="button">Lanjut</button><button class="btn" id="quitBtn" type="button">Keluar</button></div>
+</dialog>
+
+<script type="module" src="../kart/main.js"></script>
+</body></html>

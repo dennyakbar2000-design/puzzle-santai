@@ -1,0 +1,202 @@
+<!doctype html><html lang="id"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Solitaire Tiga Puncak · Puzzle Santai</title>
+<meta name="theme-color" content="#e2572b">
+<link rel="manifest" href="../manifest.webmanifest"><link rel="icon" href="../icon.svg">
+<link rel="stylesheet" href="../style.css">
+<style>
+  .stage { touch-action: manipulation; }
+  .table { width: 100%; max-width: 480px; container-type: inline-size; display: flex; flex-direction: column; gap: 18px; }
+  .tableau { position: relative; width: 100%; aspect-ratio: 100 / 35; }
+  .card {
+    --u: 1cqw;
+    position: absolute; width: 10%; height: 40%; padding: 0;
+    border: 1px solid #cfc6b4; border-radius: calc(var(--u) * 1.1);
+    background: #fffdf8; color: #1f1d1a;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, .25);
+    font: inherit; font-weight: 700; line-height: 1;
+    display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between;
+    cursor: pointer; touch-action: manipulation; transition: transform .15s, box-shadow .15s;
+  }
+  .card .r { font-size: calc(var(--u) * 4); padding: calc(var(--u) * .5) 0 0 calc(var(--u) * .7); }
+  .card .s { font-size: calc(var(--u) * 4.6); align-self: center; padding-bottom: calc(var(--u) * 1.2); }
+  .card.red { color: #c52235; }
+  .card.back {
+    cursor: default; border-color: rgba(255, 255, 255, .5);
+    background:
+      radial-gradient(circle at 50% 50%, rgba(255, 255, 255, .55) 0 18%, transparent 19%),
+      repeating-linear-gradient(135deg, rgba(255, 255, 255, .2) 0 2px, transparent 2px 7px),
+      #e2572b;
+    box-shadow: inset 0 0 0 calc(var(--u) * .6) rgba(255, 255, 255, .35), 0 1px 2px rgba(0, 0, 0, .25);
+  }
+  .card.play { transform: translateY(-6%); box-shadow: 0 0 0 2px var(--accent), 0 4px 10px rgba(0, 0, 0, .25); }
+  .card:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
+  .piles { display: flex; align-items: center; justify-content: space-between; }
+  .card.big { --u: 2.2cqw; position: relative; width: 22cqw; height: auto; aspect-ratio: 5 / 7; z-index: 5; transform-origin: 0 0; }
+  #stock:not(:disabled) { cursor: pointer; }
+  #waste { cursor: default; }
+  .card.big.empty { background: transparent; border: 2px dashed var(--line); box-shadow: none; color: var(--muted); align-items: center; justify-content: center; font-size: .85rem; }
+  #stock .n {
+    align-self: center; margin: auto; padding: 4px 8px; border-radius: 999px;
+    background: rgba(255, 255, 255, .92); color: #1f1d1a; font-size: calc(var(--u) * 3);
+  }
+  .info { text-align: center; color: var(--muted); font-size: .85rem; }
+  .info b { display: block; color: var(--text); font-size: 1.1rem; }
+</style></head>
+<body class="game">
+<header class="topbar"><a class="back" href="../index.html" aria-label="Kembali ke daftar game">‹</a><h1>Solitaire Tiga Puncak</h1>
+<div class="stats"><span>Skor <b id="score">0</b></span><span>Terbaik <b id="best">0</b></span></div></header>
+<main class="stage">
+  <div class="table">
+    <div class="tableau" id="tableau"></div>
+    <div class="piles">
+      <button class="card big back" id="stock"></button>
+      <div class="info">Beruntun<b id="streak">×1</b>Pilih kartu ±1</div>
+      <div class="card big" id="waste" aria-live="polite"></div>
+    </div>
+  </div>
+</main>
+<div class="toolbar"><button class="btn" id="undo">Batal</button><button class="btn" id="restart">Kocok ulang</button></div>
+<dialog class="overlay" id="over"><h2 id="overTitle">Menang!</h2><p id="overText"></p><button class="btn primary" id="again">Main lagi</button></dialog>
+<script type="module">
+import { makeDeck, deal, LAYOUT, isFree, canPlay, playCard, draw, isWon, isStuck } from '../logic/solitaire.js';
+import { getBest, saveBest, registerSW } from '../app.js';
+registerSW();
+
+const KEY = 'solitaire';
+const RANKS = ['', 'A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+const SUITS = ['♠', '♥', '♦', '♣'];
+const SUIT_NAMES = ['sekop', 'hati', 'wajik', 'keriting'];
+const FLY_MS = 240;
+const $ = (id) => document.getElementById(id);
+const els = {
+  tableau: $('tableau'), stock: $('stock'), waste: $('waste'), score: $('score'), best: $('best'),
+  streak: $('streak'), undo: $('undo'), over: $('over'), overTitle: $('overTitle'), overText: $('overText'),
+};
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+
+let state;
+let history = [];
+
+const label = (card) => `${RANKS[card.rank]} ${SUIT_NAMES[card.suit]}`;
+
+function paintFace(el, card) {
+  el.classList.toggle('red', card.suit === 1 || card.suit === 2);
+  el.innerHTML = `<span class="r">${RANKS[card.rank]}</span><span class="s">${SUITS[card.suit]}</span>`;
+}
+
+function boardButton(card, i) {
+  const btn = document.createElement('button');
+  const { row, x } = LAYOUT[i];
+  btn.className = 'card';
+  btn.dataset.i = i;
+  btn.style.left = `${x * 10}%`;
+  btn.style.top = `${row * 20}%`;
+  if (isFree(state, i)) {
+    paintFace(btn, card);
+    btn.setAttribute('aria-label', label(card));
+    btn.classList.toggle('play', canPlay(state, i));
+  } else {
+    btn.classList.add('back');
+    btn.disabled = true;
+    btn.setAttribute('aria-label', 'Kartu tertutup');
+  }
+  return btn;
+}
+
+function renderStock() {
+  const n = state.stock.length;
+  els.stock.disabled = n === 0;
+  els.stock.classList.toggle('back', n > 0);
+  els.stock.classList.toggle('empty', n === 0);
+  els.stock.innerHTML = n > 0 ? `<span class="n">${n}</span>` : 'Kosong';
+  els.stock.setAttribute('aria-label', n > 0 ? `Ambil kartu, sisa ${n}` : 'Tumpukan habis');
+}
+
+function render() {
+  els.tableau.replaceChildren(...state.board.flatMap((card, i) => (card ? [boardButton(card, i)] : [])));
+  renderStock();
+  const top = state.waste[state.waste.length - 1];
+  paintFace(els.waste, top);
+  els.waste.setAttribute('aria-label', `Kartu atas: ${label(top)}`);
+  els.score.textContent = state.score;
+  els.best.textContent = getBest(KEY);
+  els.streak.textContent = `×${state.streak}`;
+  els.undo.disabled = history.length === 0;
+}
+
+// Slides the new waste card from where the tapped card was.
+function fly(fromRect) {
+  if (!fromRect || reducedMotion.matches) return;
+  const to = els.waste.getBoundingClientRect();
+  const dx = fromRect.left - to.left;
+  const dy = fromRect.top - to.top;
+  const scale = fromRect.width / to.width;
+  els.waste.animate(
+    [{ transform: `translate(${dx}px, ${dy}px) scale(${scale})`, opacity: 0.4 }, { transform: 'none', opacity: 1 }],
+    { duration: FLY_MS, easing: 'ease-out' },
+  );
+}
+
+function shake(el) {
+  if (reducedMotion.matches) return;
+  el.animate(
+    [{ translate: '0 0' }, { translate: '-3px 0' }, { translate: '3px 0' }, { translate: '0 0' }],
+    { duration: 180 },
+  );
+}
+
+function showEnd(title, text) {
+  els.best.textContent = saveBest(KEY, state.score);
+  els.overTitle.textContent = title;
+  els.overText.textContent = text;
+  setTimeout(() => { if (!els.over.open) els.over.showModal(); }, FLY_MS + 60);
+}
+
+function checkEnd() {
+  if (isWon(state)) showEnd('Menang!', `Semua kartu bersih. Skor ${state.score}.`);
+  else if (isStuck(state)) showEnd('Tidak ada langkah lagi', `Skor kamu ${state.score}.`);
+}
+
+function commit(next, fromEl) {
+  const fromRect = fromEl.getBoundingClientRect();
+  history.push(state);
+  state = next;
+  render();
+  fly(fromRect);
+  checkEnd();
+}
+
+function newGame() {
+  history = [];
+  state = deal(makeDeck());
+  render();
+}
+
+els.tableau.addEventListener('click', (e) => {
+  const btn = e.target.closest('button.card');
+  if (!btn || btn.disabled) return;
+  const next = playCard(state, Number(btn.dataset.i));
+  if (next) commit(next, btn);
+  else shake(btn);
+});
+
+els.stock.addEventListener('click', () => {
+  const next = draw(state);
+  if (next) commit(next, els.stock);
+});
+
+els.undo.addEventListener('click', () => {
+  if (history.length === 0) return;
+  state = history.pop();
+  render();
+});
+
+$('restart').addEventListener('click', newGame);
+$('again').addEventListener('click', () => {
+  els.over.close();
+  newGame();
+});
+
+newGame();
+</script></body></html>

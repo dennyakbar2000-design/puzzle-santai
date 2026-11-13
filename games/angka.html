@@ -1,0 +1,253 @@
+<!doctype html><html lang="id"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Gabung Angka · Puzzle Santai</title>
+<meta name="theme-color" content="#e2572b">
+<link rel="manifest" href="../manifest.webmanifest"><link rel="icon" href="../icon.svg">
+<link rel="stylesheet" href="../style.css">
+<style>
+  .board {
+    width: min(100%, 420px);
+    aspect-ratio: 1;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    grid-template-rows: repeat(4, 1fr);
+    gap: 3%;
+    padding: 3%;
+    border-radius: var(--radius);
+    background: var(--surface-2);
+    box-shadow: var(--shadow);
+    touch-action: none;
+    container-type: inline-size;
+    cursor: grab;
+  }
+  .cell {
+    display: grid;
+    place-items: center;
+    border-radius: 10px;
+    background: var(--surface);
+    opacity: .55;
+    font-weight: 800;
+    font-size: 10cqi;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .cell[data-v] { opacity: 1; background: var(--tile); color: var(--ink, #fff); }
+  .cell[data-d="3"] { font-size: 8cqi; }
+  .cell[data-d="4"] { font-size: 6.2cqi; }
+  .cell[data-d="5"] { font-size: 5cqi; }
+  .cell[data-v="2"]    { --tile: #fbe7c6; --ink: #5a3d1e; }
+  .cell[data-v="4"]    { --tile: #f6cf8f; --ink: #5a3d1e; }
+  .cell[data-v="8"]    { --tile: #f2a160; }
+  .cell[data-v="16"]   { --tile: #e9784a; }
+  .cell[data-v="32"]   { --tile: #d9534a; }
+  .cell[data-v="64"]   { --tile: #c03a60; }
+  .cell[data-v="128"]  { --tile: #8b45ad; }
+  .cell[data-v="256"]  { --tile: #5a5cc6; }
+  .cell[data-v="512"]  { --tile: #2b7fbf; }
+  .cell[data-v="1024"] { --tile: #17958d; }
+  .cell[data-v="2048"] { --tile: #2a9d55; box-shadow: 0 0 0 3px #f6cf8f inset; }
+  .cell[data-v="big"]  { --tile: #2b2733; box-shadow: 0 0 0 3px var(--accent) inset; }
+  .cell.pop { animation: pop 140ms ease-out; }
+  .cell.pulse { animation: pulse 120ms ease-out; }
+  @keyframes pop { from { transform: scale(.3); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  @keyframes pulse { 50% { transform: scale(1.12); } }
+  .hint { margin: 0; color: var(--muted); font-size: .85rem; text-align: center; }
+  .over-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+</style></head>
+<body class="game">
+<header class="topbar"><a class="back" href="../index.html" aria-label="Kembali ke daftar game">‹</a><h1>Gabung Angka</h1>
+<div class="stats"><span>Skor <b id="score">0</b></span><span>Terbaik <b id="best">0</b></span></div></header>
+<main class="stage">
+  <div class="board" id="board" role="grid" aria-label="Papan angka 4 kali 4"></div>
+  <p class="hint">Geser papan (atau pakai panah) untuk menggabungkan angka kembar.</p>
+</main>
+<div class="toolbar"><button class="btn" id="undo">Batal langkah</button><button class="btn" id="restart">Main lagi</button></div>
+<dialog class="overlay" id="over"><h2 id="over-title"></h2><p id="over-text"></p>
+  <div class="over-actions"><button class="btn" id="keep-going">Lanjut main</button><button class="btn primary" id="again">Main lagi</button></div>
+</dialog>
+<script type="module">
+import { SIZE, emptyBoard, move, addRandomTile, canMove, hasWon } from '../logic/angka.js';
+import { getBest, saveBest, registerSW } from '../app.js';
+registerSW();
+
+const KEY = 'angka';
+const STATE_KEY = 'angka:state';
+const SWIPE_MIN = 24;
+const KEYS = {
+  ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down',
+  a: 'left', d: 'right', w: 'up', s: 'down',
+};
+
+const $ = (id) => document.getElementById(id);
+const boardEl = $('board');
+const scoreEl = $('score');
+const bestEl = $('best');
+const undoBtn = $('undo');
+const dialog = $('over');
+
+const cells = Array.from({ length: SIZE * SIZE }, () => {
+  const el = document.createElement('div');
+  el.className = 'cell';
+  el.setAttribute('role', 'gridcell');
+  boardEl.append(el);
+  return el;
+});
+
+let state;
+
+function newGame() {
+  const board = addRandomTile(addRandomTile(emptyBoard()));
+  return { board, score: 0, prev: null, wonShown: false };
+}
+
+function isValidBoard(b) {
+  return Array.isArray(b) && b.length === SIZE &&
+    b.every((r) => Array.isArray(r) && r.length === SIZE && r.every((v) => Number.isInteger(v) && v >= 0));
+}
+
+function loadState() {
+  try {
+    const s = JSON.parse(localStorage.getItem(STATE_KEY));
+    if (s && isValidBoard(s.board) && Number.isFinite(s.score)) {
+      const prev = s.prev && isValidBoard(s.prev.board) ? s.prev : null;
+      return { board: s.board, score: s.score, prev, wonShown: !!s.wonShown };
+    }
+  } catch {
+    // corrupt or blocked storage: start fresh
+  }
+  return null;
+}
+
+function saveState() {
+  try { localStorage.setItem(STATE_KEY, JSON.stringify(state)); } catch { /* storage blocked */ }
+}
+
+function clearState() {
+  try { localStorage.removeItem(STATE_KEY); } catch { /* storage blocked */ }
+}
+
+function animate(el, cls) {
+  el.classList.remove('pop', 'pulse');
+  void el.offsetWidth; // restart the animation
+  el.classList.add(cls);
+}
+
+function render(fx = {}) {
+  state.board.flat().forEach((v, i) => {
+    const el = cells[i];
+    el.textContent = v || '';
+    if (v) {
+      el.dataset.v = v > 2048 ? 'big' : v;
+      el.dataset.d = Math.min(String(v).length, 5);
+      el.setAttribute('aria-label', String(v));
+    } else {
+      delete el.dataset.v;
+      delete el.dataset.d;
+      el.setAttribute('aria-label', 'kosong');
+    }
+    if (i === fx.spawn) animate(el, 'pop');
+    else if (fx.merged?.has(i)) animate(el, 'pulse');
+  });
+  scoreEl.textContent = state.score;
+  bestEl.textContent = saveBest(KEY, state.score);
+  undoBtn.disabled = !state.prev;
+}
+
+function countOf(board, v) {
+  return board.flat().filter((x) => x === v).length;
+}
+
+// shortcut: guesses merged cells from value counts, may pulse an extra same-valued tile; fine for a cosmetic effect.
+function mergedCells(before, after) {
+  const set = new Set();
+  after.flat().forEach((v, i) => {
+    if (v && v !== before.flat()[i] && countOf(after, v) > countOf(before, v)) set.add(i);
+  });
+  return set;
+}
+
+function spawnedCell(before, after) {
+  return after.flat().findIndex((v, i) => v !== before.flat()[i]);
+}
+
+function showDialog(title, text, canContinue) {
+  $('over-title').textContent = title;
+  $('over-text').textContent = text;
+  $('keep-going').hidden = !canContinue;
+  if (!dialog.open) dialog.showModal();
+}
+
+function play(dir) {
+  if (dialog.open) return;
+  const res = move(state.board, dir);
+  if (!res.moved) return;
+  const board = addRandomTile(res.board);
+  state = {
+    board,
+    score: state.score + res.gained,
+    prev: { board: state.board, score: state.score },
+    wonShown: state.wonShown,
+  };
+  render({ merged: mergedCells(state.prev.board, res.board), spawn: spawnedCell(res.board, board) });
+  afterMove();
+}
+
+function afterMove() {
+  if (!canMove(state.board)) {
+    clearState();
+    showDialog('Tidak bisa geser lagi', `Skor kamu ${state.score}. Coba lagi?`, false);
+    return;
+  }
+  if (!state.wonShown && hasWon(state.board)) {
+    state = { ...state, wonShown: true };
+    showDialog('Kamu sampai 2048!', 'Keren! Mau lanjut cari angka lebih besar?', true);
+  }
+  saveState();
+}
+
+function undo() {
+  if (!state.prev) return;
+  state = { ...state, board: state.prev.board, score: state.prev.score, prev: null };
+  saveState();
+  render();
+}
+
+function restart() {
+  if (dialog.open) dialog.close();
+  state = newGame();
+  saveState();
+  render();
+}
+
+document.addEventListener('keydown', (e) => {
+  const dir = KEYS[e.key.length === 1 ? e.key.toLowerCase() : e.key];
+  if (!dir || e.ctrlKey || e.metaKey || e.altKey) return;
+  e.preventDefault();
+  play(dir);
+});
+
+let start = null;
+boardEl.addEventListener('pointerdown', (e) => {
+  start = { x: e.clientX, y: e.clientY };
+  boardEl.setPointerCapture(e.pointerId);
+});
+boardEl.addEventListener('pointerup', (e) => {
+  if (!start) return;
+  const dx = e.clientX - start.x;
+  const dy = e.clientY - start.y;
+  start = null;
+  if (Math.max(Math.abs(dx), Math.abs(dy)) < SWIPE_MIN) return;
+  if (Math.abs(dx) > Math.abs(dy)) play(dx > 0 ? 'right' : 'left');
+  else play(dy > 0 ? 'down' : 'up');
+});
+boardEl.addEventListener('pointercancel', () => { start = null; });
+
+undoBtn.addEventListener('click', undo);
+$('restart').addEventListener('click', restart);
+$('again').addEventListener('click', restart);
+$('keep-going').addEventListener('click', () => dialog.close());
+
+state = loadState() || newGame();
+render();
+saveState();
+</script></body></html>

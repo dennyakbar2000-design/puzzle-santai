@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Puzzle Santai</title>
+<meta name="description" content="5 game puzzle gratis yang bisa dimainkan tanpa internet.">
+<meta name="theme-color" content="#e2572b">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="stylesheet" href="style.css">
+<style>
+  .home { max-width: 720px; margin: 0 auto; padding: calc(env(safe-area-inset-top) + 24px) 16px 32px; }
+  .home header { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
+  .home header img { width: 52px; height: 52px; }
+  .home h1 { margin: 0; font-size: 1.6rem; }
+  .home header p { margin: 2px 0 0; color: var(--muted); }
+  .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; padding: 0; margin: 0; list-style: none; }
+  .list a {
+    display: flex; flex-direction: column; gap: 6px; height: 100%;
+    padding: 16px; border-radius: var(--radius); background: var(--surface);
+    box-shadow: var(--shadow); text-decoration: none;
+  }
+  .list a:active { transform: translateY(1px); }
+  .list a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .ico { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 12px; font-size: 1.7rem; }
+  .list b { font-size: 1.05rem; }
+  .list small { color: var(--muted); }
+  .best { margin-top: auto; font-size: .8rem; color: var(--accent); font-weight: 600; }
+  .note { margin-top: 24px; color: var(--muted); font-size: .85rem; text-align: center; }
+</style>
+</head>
+<body>
+<main class="home">
+  <header>
+    <img src="icon.svg" alt="">
+    <div>
+      <h1>Puzzle Santai</h1>
+      <p>Game puzzle & balap, bisa dimainkan tanpa internet.</p>
+    </div>
+  </header>
+  <ul class="list" id="list"></ul>
+  <p class="note" id="note">Buka sekali saat online, setelah itu semua game bisa dimainkan offline.</p>
+</main>
+<script type="module">
+  import { getBest, registerSW } from './app.js';
+  registerSW();
+
+  const GAMES = [
+    { key: 'balok', name: 'Susun Balok', desc: 'Taruh balok, penuhi baris & kolom.', icon: '🧱', bg: '#ffd8c2', unit: 'poin' },
+    { key: 'angka', name: 'Gabung Angka', desc: 'Geser & gabungkan sampai 2048.', icon: '🔢', bg: '#ffe9a8', unit: 'poin' },
+    { key: 'ubin', name: 'Sambung Ubin', desc: 'Pasangkan ubin kembar yang tersambung.', icon: '🀄', bg: '#cdeccf', unit: 'poin' },
+    { key: 'warna', name: 'Sortir Warna', desc: 'Kelompokkan bola sesuai warnanya.', icon: '🧪', bg: '#d6dcff', unit: 'level' },
+    { key: 'solitaire', name: 'Solitaire Tiga Puncak', desc: 'Ambil kartu satu angka lebih/kurang.', icon: '🃏', bg: '#f6d0e4', unit: 'poin' },
+    { key: 'kart', name: 'Kart Santai', desc: 'Balap kart 3D lawan 3 bot.', icon: '🏎️', bg: '#c4ecf7', unit: 'kali juara' },
+  ];
+
+  const list = document.getElementById('list');
+  for (const g of GAMES) {
+    const best = getBest(g.key);
+    const li = document.createElement('li');
+    li.innerHTML = `
+      <a href="games/${g.key}.html">
+        <span class="ico" style="background:${g.bg}" aria-hidden="true">${g.icon}</span>
+        <b>${g.name}</b>
+        <small>${g.desc}</small>
+        <span class="best">${best ? `Terbaik: ${best.toLocaleString('id-ID')} ${g.unit}` : 'Belum dimainkan'}</span>
+      </a>`;
+    list.append(li);
+  }
+  if (!navigator.onLine) document.getElementById('note').textContent = 'Kamu sedang offline — game tetap bisa dimainkan.';
+</script>
+</body>
+</html>

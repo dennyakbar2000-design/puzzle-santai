@@ -1,0 +1,15 @@
+{
+  "name": "Puzzle Santai",
+  "short_name": "Puzzle",
+  "description": "Game puzzle & balap yang bisa dimainkan tanpa internet.",
+  "lang": "id",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4f1ea",
+  "theme_color": "#e2572b",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

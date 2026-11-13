@@ -1,0 +1,256 @@
+<!doctype html><html lang="id"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Sambung Ubin · Puzzle Santai</title>
+<meta name="theme-color" content="#e2572b">
+<link rel="manifest" href="../manifest.webmanifest"><link rel="icon" href="../icon.svg">
+<link rel="stylesheet" href="../style.css">
+<style>
+  .timebar { width: min(100%, 420px); height: 10px; border-radius: 99px; background: var(--surface-2); overflow: hidden; }
+  .timebar i { display: block; height: 100%; width: 100%; background: #3fa66b; border-radius: inherit; transition: width .9s linear, background .3s; }
+  .timebar.low i { background: var(--accent); }
+  .board-wrap {
+    position: relative;
+    width: min(100%, 420px, calc((100dvh - 250px) * 7 / 9));
+    aspect-ratio: 7 / 9;
+    border-radius: var(--radius);
+    background: var(--surface-2);
+    container-type: inline-size;
+    touch-action: manipulation;
+  }
+  /* half-tile ring around the grid so border paths stay visible: 1/14 of width, 1/18 of height */
+  .grid { position: absolute; inset: calc(100% / 18) calc(100% / 14); display: grid; grid-template-columns: repeat(6, 1fr); grid-template-rows: repeat(8, 1fr); }
+  .tile {
+    appearance: none; border: 0; margin: 2px; padding: 0 0 3px;
+    display: grid; place-items: center;
+    border-radius: 9px;
+    background: linear-gradient(180deg, var(--surface), var(--surface) 70%, var(--bg));
+    box-shadow: 0 3px 0 var(--line), 0 4px 8px rgba(0, 0, 0, .12);
+    font: calc(100cqw / 7 * .56)/1 "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+    color: var(--text);
+    cursor: pointer;
+    transition: transform .12s, box-shadow .12s, opacity .2s;
+    touch-action: manipulation;
+  }
+  .tile:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--line); }
+  .tile.sel { outline: 3px solid var(--accent); outline-offset: -1px; transform: translateY(-2px); }
+  .tile.hint { animation: glow .8s ease-in-out infinite alternate; }
+  .tile.empty { visibility: hidden; pointer-events: none; }
+  .tile.shake { animation: shake .3s; }
+  .tile:focus-visible { outline: 3px solid var(--accent); }
+  @keyframes glow { to { box-shadow: 0 3px 0 var(--line), 0 0 0 4px var(--accent); } }
+  @keyframes shake { 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+  .line { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .line polyline { fill: none; stroke: var(--accent); stroke-width: .12; stroke-linecap: round; stroke-linejoin: round; }
+  .toast {
+    position: absolute; left: 50%; top: 45%; transform: translate(-50%, -50%);
+    padding: 8px 16px; border-radius: 99px; background: var(--text); color: var(--bg);
+    font-weight: 700; pointer-events: none; opacity: 0; transition: opacity .25s; white-space: nowrap;
+  }
+  .toast.show { opacity: .92; }
+</style></head>
+<body class="game">
+<header class="topbar"><a class="back" href="../index.html" aria-label="Kembali ke daftar game">‹</a><h1>Sambung Ubin</h1>
+<div class="stats"><span>Skor <b id="score">0</b></span><span>Terbaik <b id="best">0</b></span></div></header>
+<main class="stage">
+  <div class="timebar" id="timebar" role="progressbar" aria-label="Sisa waktu" aria-valuemin="0" aria-valuemax="180"><i></i></div>
+  <div class="board-wrap">
+    <div class="grid" id="grid"></div>
+    <svg class="line" id="line" viewBox="0 0 7 9" aria-hidden="true"></svg>
+    <div class="toast" id="toast" role="status"></div>
+  </div>
+</main>
+<div class="toolbar"><button class="btn" id="hint">Petunjuk</button><button class="btn" id="shuffle">Acak</button><button class="btn" id="restart">Main lagi</button></div>
+<dialog class="overlay" id="over"><h2 id="overTitle">Waktu habis</h2><p id="overText"></p><button class="btn primary" id="again">Main lagi</button></dialog>
+<script type="module">
+import { makeBoard, findPath, findAnyPair, shuffle, removePair, isCleared } from '../logic/ubin.js';
+import { getBest, saveBest, registerSW } from '../app.js';
+registerSW();
+
+const ROWS = 8, COLS = 6;
+const SYMBOLS = ['🍓', '🍋', '🍇', '🥝', '🍑', '🐸', '🐼', '🦊', '🐢', '🌵', '🌻', '🍄'];
+const ROUND_SECONDS = 180, COMBO_MS = 3000, COMBO_STEP = 5, COMBO_CAP = 25;
+const PAIR_POINTS = 10, HINT_COST = 5, MAX_HINTS = 3, MAX_SHUFFLES = 2;
+const LINE_MS = 250, SHUFFLE_TRIES = 100;
+
+const $ = (id) => document.getElementById(id);
+const gridEl = $('grid'), lineEl = $('line'), toastEl = $('toast'), timebar = $('timebar');
+const scoreEl = $('score'), bestEl = $('best'), hintBtn = $('hint'), shuffleBtn = $('shuffle'), overDlg = $('over');
+
+let s; // round state
+let tiles = []; // tiles[r][c] -> button
+let timerId = 0, toastId = 0;
+
+function newGame() {
+  clearInterval(timerId);
+  s = { board: makeBoard(ROWS, COLS, SYMBOLS.length), sel: null, hint: null, score: 0, combo: 0,
+    lastPairAt: 0, timeLeft: ROUND_SECONDS, hints: MAX_HINTS, shuffles: MAX_SHUFFLES, busy: false, over: false };
+  bestEl.textContent = getBest('ubin');
+  lineEl.replaceChildren();
+  buildGrid();
+  paint();
+  timerId = setInterval(tick, 1000);
+}
+
+function buildGrid() {
+  gridEl.replaceChildren();
+  tiles = s.board.map((row, r) => row.map((_, c) => {
+    const b = document.createElement('button');
+    b.className = 'tile';
+    b.dataset.r = r;
+    b.dataset.c = c;
+    gridEl.append(b);
+    return b;
+  }));
+}
+
+const same = (a, b) => a && b && a.r === b.r && a.c === b.c;
+const isHint = (p) => s.hint && (same(s.hint[0], p) || same(s.hint[1], p));
+
+function paint() {
+  s.board.forEach((row, r) => row.forEach((v, c) => {
+    const el = tiles[r][c], p = { r, c };
+    el.textContent = v === null ? '' : SYMBOLS[v];
+    el.classList.toggle('empty', v === null);
+    el.classList.toggle('sel', same(s.sel, p));
+    el.classList.toggle('hint', v !== null && isHint(p));
+    el.setAttribute('aria-label', v === null ? 'kosong' : SYMBOLS[v]);
+    el.setAttribute('aria-pressed', same(s.sel, p) ? 'true' : 'false');
+  }));
+  scoreEl.textContent = s.score;
+  hintBtn.textContent = `Petunjuk (${s.hints})`;
+  hintBtn.disabled = s.hints === 0 || s.over;
+  shuffleBtn.textContent = `Acak (${s.shuffles})`;
+  shuffleBtn.disabled = s.shuffles === 0 || s.over;
+  paintTime();
+}
+
+function paintTime() {
+  timebar.firstElementChild.style.width = (s.timeLeft / ROUND_SECONDS) * 100 + '%';
+  timebar.classList.toggle('low', s.timeLeft <= 30);
+  timebar.setAttribute('aria-valuenow', s.timeLeft);
+}
+
+function tick() {
+  if (document.hidden || s.over) return;
+  s.timeLeft = Math.max(0, s.timeLeft - 1);
+  paintTime();
+  if (s.timeLeft === 0 && !s.busy) finish(false);
+}
+
+function toast(text) {
+  toastEl.textContent = text;
+  toastEl.classList.add('show');
+  clearTimeout(toastId);
+  toastId = setTimeout(() => toastEl.classList.remove('show'), 1200);
+}
+
+function shake(p) {
+  const el = tiles[p.r][p.c];
+  el.classList.remove('shake');
+  void el.offsetWidth; // restart the animation
+  el.classList.add('shake');
+}
+
+function onTap(p) {
+  if (s.busy || s.over || s.board[p.r][p.c] === null) return;
+  if (!s.sel) s.sel = p;
+  else if (same(s.sel, p)) s.sel = null;
+  else {
+    const path = findPath(s.board, s.sel, p);
+    if (path) return match(s.sel, p, path);
+    if (s.board[s.sel.r][s.sel.c] === s.board[p.r][p.c]) shake(p);
+    s.sel = p;
+  }
+  paint();
+}
+
+function drawLine(path) {
+  const pl = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+  pl.setAttribute('points', path.map((pt) => `${pt.c},${pt.r}`).join(' '));
+  lineEl.replaceChildren(pl);
+}
+
+function addPairScore() {
+  const now = Date.now();
+  s.combo = s.lastPairAt && now - s.lastPairAt <= COMBO_MS ? s.combo + 1 : 0;
+  s.lastPairAt = now;
+  s.score += PAIR_POINTS + Math.min(s.combo * COMBO_STEP, COMBO_CAP);
+  if (s.combo > 0) toast(`Kombo x${s.combo + 1}!`);
+}
+
+function match(a, b, path) {
+  s.busy = true;
+  s.hint = null;
+  drawLine(path);
+  addPairScore();
+  paint();
+  setTimeout(() => {
+    s.board = removePair(s.board, a, b);
+    s.sel = null;
+    s.busy = false;
+    lineEl.replaceChildren();
+    if (isCleared(s.board)) return finish(true);
+    if (s.timeLeft === 0) return finish(false);
+    if (!findAnyPair(s.board)) {
+      s.board = reshuffle(s.board);
+      toast('Diacak otomatis');
+    }
+    paint();
+  }, LINE_MS);
+}
+
+function reshuffle(board) {
+  let next = board;
+  for (let i = 0; i < SHUFFLE_TRIES; i++) {
+    next = shuffle(board);
+    if (findAnyPair(next)) break;
+  }
+  return next;
+}
+
+function useHint() {
+  if (s.busy || s.over || s.hints === 0) return;
+  s.hint = findAnyPair(s.board);
+  s.hints--;
+  s.score = Math.max(0, s.score - HINT_COST);
+  paint();
+}
+
+function useShuffle() {
+  if (s.busy || s.over || s.shuffles === 0) return;
+  s.board = reshuffle(s.board);
+  s.shuffles--;
+  s.sel = null;
+  s.hint = null;
+  paint();
+}
+
+function finish(won) {
+  s.over = true;
+  clearInterval(timerId);
+  const bonus = won ? s.timeLeft * 2 : 0;
+  s.score += bonus;
+  bestEl.textContent = saveBest('ubin', s.score);
+  paint();
+  $('overTitle').textContent = won ? 'Bersih semua!' : 'Waktu habis';
+  $('overText').textContent = won
+    ? `Skor ${s.score} (bonus waktu +${bonus}). Mantap!`
+    : `Skor kamu ${s.score}. Coba lagi?`;
+  overDlg.showModal();
+}
+
+gridEl.addEventListener('click', (e) => {
+  const t = e.target.closest('.tile');
+  if (t) onTap({ r: Number(t.dataset.r), c: Number(t.dataset.c) });
+});
+gridEl.addEventListener('animationend', (e) => {
+  if (e.animationName === 'shake') e.target.classList.remove('shake');
+});
+hintBtn.addEventListener('click', useHint);
+shuffleBtn.addEventListener('click', useShuffle);
+$('restart').addEventListener('click', newGame);
+$('again').addEventListener('click', () => overDlg.close());
+overDlg.addEventListener('close', newGame);
+
+newGame();
+</script></body></html>
